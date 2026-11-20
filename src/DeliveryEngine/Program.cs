@@ -1,5 +1,6 @@
 ﻿using DeliveryEngine.Delivery;
 using DeliveryEngine.Git;
+using DeliveryEngine.GitHub;
 using DeliveryEngine.Planning;
 using DeliveryEngine.Tasks;
 
@@ -18,7 +19,11 @@ public static class Program
         return await RunAsync(args, Console.Out, Console.Error);
     }
 
-    public static async Task<int> RunAsync(string[] args, TextWriter stdout, TextWriter stderr)
+    public static async Task<int> RunAsync(
+        string[] args,
+        TextWriter stdout,
+        TextWriter stderr,
+        Func<string, IGitHubClient>? githubFactory = null)
     {
         if (args.Length == 0 || args[0] is "-h" or "--help")
         {
@@ -36,6 +41,7 @@ public static class Program
         var rest = args.Skip(1).ToList();
         var dryRun = rest.Remove("--dry-run");
         var push = rest.Remove("--push");
+        var createPr = rest.Remove("--pr");
 
         var repoPath = Directory.GetCurrentDirectory();
         var repoIndex = rest.IndexOf("--repo");
@@ -100,8 +106,16 @@ public static class Program
         DeliveryResult result;
         try
         {
-            var options = new DeliveryOptions(Remote: push ? "origin" : null);
-            result = await GitDelivery.RunAsync(repoPath, task, options);
+            if (createPr)
+            {
+                var github = (githubFactory ?? (path => new GhCliClient(path)))(repoPath);
+                result = await PullRequestDelivery.RunAsync(repoPath, task, github);
+            }
+            else
+            {
+                var options = new DeliveryOptions(Remote: push ? "origin" : null);
+                result = await GitDelivery.RunAsync(repoPath, task, options);
+            }
         }
         catch (GitException ex)
         {
@@ -111,14 +125,21 @@ public static class Program
 
         var writer = result.IsSuccess ? stdout : stderr;
         writer.WriteLine($"[{result.Status}] {result.Message}");
-
+        if (result.PullRequestUrl is not null)
+        {
+            writer.WriteLine($"PR: {result.PullRequestUrl}");
+        }
+        foreach (var warning in result.Warnings)
+        {
+            stderr.WriteLine($"Предупреждение: {warning}");
+        }
         if (result.Status == DeliveryStatus.Committed)
         {
-            stdout.WriteLine("Ветка создана только локально. Чтобы отправить ее в origin, добавьте --push.");
+            stdout.WriteLine("Ветка создана только локально. Чтобы отправить ее в origin, добавьте --push или --pr.");
         }
         else if (result.Status == DeliveryStatus.Pushed)
         {
-            stdout.WriteLine("PR пока не создается...");
+            stdout.WriteLine("Ветка запушена без PR. Чтобы создать PR, используйте --pr.");
         }
 
         return result.IsSuccess ? ExitOk : ExitDeliveryFailed;
@@ -127,9 +148,10 @@ public static class Program
     private static void PrintUsage(TextWriter writer)
     {
         writer.WriteLine("Использование:");
-        writer.WriteLine("  DeliveryEngine deliver <task.json> [--repo <путь>] [--push] [--dry-run]\n");
+        writer.WriteLine("  DeliveryEngine deliver <task.json> [--repo <путь>] [--push | --pr] [--dry-run]\n");
         writer.WriteLine("  --repo     путь к git-репозиторию (по умолчанию текущая папка)");
         writer.WriteLine("  --push     взять свежий base из origin и запушить ветку туда");
+        writer.WriteLine("  --pr       то же, что --push, плюс PR, метки и auto-merge через gh");
         writer.WriteLine("  --dry-run  только проверить задачу и показать план");
     }
 }

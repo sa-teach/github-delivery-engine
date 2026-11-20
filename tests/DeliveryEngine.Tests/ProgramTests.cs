@@ -17,11 +17,13 @@ public sealed class ProgramTests : IDisposable
         return path;
     }
 
-    private static async Task<(int Code, string Out, string Err)> Run(params string[] args)
+    private static Task<(int Code, string Out, string Err)> Run(params string[] args) => RunWith(null, args);
+
+    private static async Task<(int Code, string Out, string Err)> RunWith(FakeGitHubClient? github, params string[] args)
     {
         var stdout = new StringWriter();
         var stderr = new StringWriter();
-        var code = await Program.RunAsync(args, stdout, stderr);
+        var code = await Program.RunAsync(args, stdout, stderr, github is null ? null : _ => github);
         return (code, stdout.ToString(), stderr.ToString());
     }
 
@@ -124,6 +126,36 @@ public sealed class ProgramTests : IDisposable
         Assert.Equal(Program.ExitOk, code);
         Assert.Contains("--push", output);
         Assert.False((await origin.RunAsync("rev-parse", "--verify", "--quiet", "refs/heads/fix/t1")).Success);
+    }
+    
+    [Fact]
+    public async Task Deliver_WithPr_CreatesPullRequestAndPrintsUrl()
+    {
+        using var repo = await TempGitRepo.CreateAsync();
+        await repo.AddOriginAsync();
+        var github = new FakeGitHubClient();
+
+        var (code, output, err) = await RunWith(github, "deliver", WriteTask(ValidJson), "--repo", repo.Path, "--pr");
+
+        Assert.Equal(Program.ExitOk, code);
+        Assert.Empty(err);
+        Assert.Contains("[PullRequestCreated]", output);
+        Assert.Contains("https://github.com/owner/repo/pull/42", output);
+        Assert.Equal(["create", "labels #42: bot", "auto-merge #42"], github.Calls);
+    }
+
+    [Fact]
+    public async Task Deliver_WithPr_AutoMergeFailure_ReturnsDeliveryFailedCode()
+    {
+        using var repo = await TempGitRepo.CreateAsync();
+        await repo.AddOriginAsync();
+        var github = new FakeGitHubClient { FailOn = "auto-merge" };
+
+        var (code, _, err) = await RunWith(github, "deliver", WriteTask(ValidJson), "--repo", repo.Path, "--pr");
+
+        Assert.Equal(Program.ExitDeliveryFailed, code);
+        Assert.Contains("[AutoMergeFailed]", err);
+        Assert.Contains("pull/42", err);
     }
 
     [Fact]

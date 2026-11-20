@@ -16,13 +16,19 @@ public enum DeliveryStatus
     NothingToCommit,
     CommitFailed,
     PushFailed,
+    PullRequestCreated,
+    PullRequestFailed,
+    AutoMergeFailed,
 }
 
 public sealed record DeliveryResult(DeliveryStatus Status, string Message, string? CommitSha = null)
 {
-    public bool IsSuccess => Status is DeliveryStatus.Committed or DeliveryStatus.Pushed;
-}
+    public string? PullRequestUrl { get; init; }
 
+    public IReadOnlyList<string> Warnings { get; init; } = [];
+
+    public bool IsSuccess => Status is DeliveryStatus.Committed or DeliveryStatus.Pushed or DeliveryStatus.PullRequestCreated;
+}
 // Remote = null: только локальный коммит, от локальной ветки base
 // Remote = "origin": base берется из origin, результат пушится туда же
 public sealed record DeliveryOptions(string? Remote = null);
