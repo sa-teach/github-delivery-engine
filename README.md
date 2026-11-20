@@ -6,407 +6,287 @@
 
 # English
 
-## Overview
-
-GitHub Delivery Engine is an experimental automation project that originated from a large-scale GitHub Auto Merge stress test.
-
-The project started as an attempt to explore how GitHub behaves when processing a continuous stream of automatically generated Pull Requests. During the initial experiment, the repository successfully processed **1,035 sequential Pull Requests** with a **100% merge success rate** and no failed deliveries.
-
-Since then, the experiment has evolved into a broader idea: building a reusable delivery layer capable of creating branches, applying changes, opening Pull Requests, validating them through CI, and automatically merging approved updates.
-
----
-
-## Current Status
-
-### Implemented
-
-- ✅ Automated branch creation
-- ✅ Automated commit generation
-- ✅ Automated Pull Request creation
-- ✅ GitHub Actions integration
-- ✅ GitHub Auto Merge support
-- ✅ Automatic branch cleanup
-- ✅ Stress-tested with 1,035 sequential Pull Requests
-
-### In Progress
-
-- 🚧 Task queue
-- 🚧 JSON-based task specification
-- 🚧 Patch delivery support
-- 🚧 AI-agent integration
-
----
-
-## Why This Project Exists
-
-Modern AI systems can analyze repositories, generate code, and propose fixes.
-
-What is often missing is a reliable delivery mechanism capable of safely forwarding those changes into a standard GitHub workflow without manual intervention.
-
-This project explores how such a delivery layer can be implemented using native GitHub capabilities:
-
-- Branches
-- Pull Requests
-- CI validation
-- Auto Merge
-- Repository automation
-
----
-
-## Architecture
+A small .NET command-line tool that turns a JSON description of changes into a regular GitHub Pull Request — and reports honestly how it ended.
 
 ```text
-Change Provider
-(AI Agent / Script / External Tool)
-                │
-                ▼
-      GitHub Delivery Engine
-                │
-                ▼
-         Create Branch
-                │
-                ▼
-          Apply Changes
-                │
-                ▼
-              Commit
-                │
-                ▼
-               Push
-                │
-                ▼
-         Create Pull Request
-                │
-                ▼
-      GitHub Actions (CI)
-                │
-                ▼
-          GitHub Auto Merge
-                │
-                ▼
-               Main
+task.json ──► branch from fresh main ──► apply changes ──► commit ──► push
+          ──► Pull Request ──► labels ──► auto-merge ──► wait for CI ──► status
 ```
 
----
+The intended users are scripts and AI agents that can produce changes but should not push to `main` directly. Every change goes through a PR, the repository's CI and its branch rules.
 
-## Chain Strategy
+## Status
 
-One of the key ideas explored during the stress test was the **Chain Strategy**.
+Working v1, tested against a real repository (merge, CI failure, re-run, missing label).
 
-Instead of continuously syncing with a potentially outdated remote branch, each new branch was created from the previous local branch:
+- ✅ JSON task format with validation
+- ✅ `write`, `delete` and `patch` (unified diff) operations
+- ✅ Work in a temporary `git worktree` — your working copy is never touched
+- ✅ Branch from a freshly fetched `base`, push without `--force`
+- ✅ Pull Request, labels and auto-merge via GitHub CLI
+- ✅ Waiting for the result: merged / CI failed / timed out
+- ✅ Safe re-runs: an already delivered task is reported, not duplicated
 
-```text
-main
- └── branch-1
-      └── branch-2
-           └── branch-3
-                └── ...
-                     └── branch-1035
+## Requirements
+
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- `git`
+- [GitHub CLI](https://cli.github.com/) (`gh`), logged in with `gh auth login` — only for `--pr`
+
+## Quick start
+
+```bash
+git clone https://github.com/sa-teach/github-delivery-engine.git
+cd github-delivery-engine
+dotnet test
 ```
 
-During the experiment, this approach avoided update races and merge conflicts while allowing GitHub to process Pull Requests asynchronously.
+Check a task without changing anything:
 
----
-
-## Stress Test Results
-
-| Metric | Value |
-|----------|----------:|
-| Pull Requests Created | 1,035 |
-| Successful Merges | 1,035 |
-| Merge Success Rate | 100% |
-| Failed Deliveries | 0 |
-| CI Failures | 0 |
-| Processing Time | ~3.5 hours |
-| Residual Branches | 1 |
-
-### Observations
-
-- All Pull Requests were merged successfully.
-- GitHub Actions completed validation for every Pull Request.
-- No merge conflicts were observed during the experiment.
-- Auto Merge remained operational throughout the entire test.
-- One branch (`feature/auto-line-169`) remained in the repository after completion. The exact reason was not determined.
-
----
-
-## Technology Stack
-
-- **Automation Core:** PowerShell (.ps1)
-- **Git Interface:** Git
-- **GitHub Integration:** GitHub CLI (`gh`)
-- **CI/CD:** GitHub Actions
-- **Experimental AI Integration:** Ollama (Qwen2.5-Coder / DeepSeek-R1)
-
----
-
-## Repository Structure
-
-```text
-README.md
-git-automerge-loop.ps1
-docs/
-├── architecture/
-└── research/TEST-LOG.md
+```bash
+dotnet run --project src/DeliveryEngine -- deliver examples/task.example.json --dry-run
 ```
 
----
+Deliver a task to another repository and wait for the result:
 
-## Roadmap
+```bash
+dotnet run --project src/DeliveryEngine -- deliver task.json --repo ../my-repo --pr --wait
+```
 
-### Version 1.0
-
-- [ ] Task queue
-- [ ] JSON task specification
-- [ ] Batch execution
-- [ ] Delivery pipeline abstraction
-
-### Version 2.0
-
-- [ ] Patch delivery
-- [ ] Git Diff support
-- [ ] Rollback operations
-- [ ] Retry policies
-
-### Version 3.0
-
-- [ ] AI-agent integration
-- [ ] Issue → Fix → Pull Request workflow
-- [ ] Multi-agent collaboration
-- [ ] Repository analysis automation
-
----
-
-## Example Task Format
+## Task format
 
 ```json
 {
-  "branch": "fix/student-project",
+  "id": "fix-duplicated-code-001",
+  "base": "main",
+  "branch": "fix/duplicated-code-001",
   "commitMessage": "fix: remove duplicated code",
-  "prTitle": "Fix duplicated code",
+  "pr": {
+    "title": "Fix duplicated code",
+    "body": "Removes duplicated helper and an unused file.",
+    "labels": ["bot"],
+    "autoMerge": true
+  },
   "changes": [
-    {
-      "file": "Program.cs",
-      "operation": "replace",
-      "content": "..."
-    }
+    { "op": "write", "file": "src/Program.cs", "content": "Console.WriteLine(\"Hello\");\n" },
+    { "op": "delete", "file": "src/OldHelper.cs" },
+    { "op": "patch", "diff": "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-# Old title\n+# New title\n" }
   ]
 }
 ```
 
----
+| Field | Required | Description |
+|---|---|---|
+| `id` | yes | Task identifier: latin letters, digits, `.`, `_`, `-` |
+| `base` | no | Branch to start from and to open the PR into. Default: `main` |
+| `branch` | yes | Working branch. It identifies the task on re-runs |
+| `commitMessage` | yes | Commit message, may be multi-line |
+| `pr.title` | yes | PR title |
+| `pr.body` | no | PR description |
+| `pr.labels` | no | Labels. A missing label is a warning, not a failure |
+| `pr.autoMerge` | no | Enable auto-merge. Default: `false` |
+| `changes` | yes | At least one change |
 
-## Research Log
+Operations:
 
-The original stress-test documentation is maintained separately:
+- `write` — create a file or replace its content (`file`, `content`). Content is written byte for byte, UTF-8 without BOM.
+- `delete` — delete a file (`file`). Deleting a missing file is an error.
+- `patch` — apply a unified diff with `git apply` (`diff`).
 
-- **docs\research\TEST-LOG.md**
+Unknown fields are rejected, so a typo like `brnach` does not pass silently. Paths must be relative, without `..`, and must not touch `.git`.
 
-This file contains the experiment history, observations, metrics, and technical notes collected during the 1,035 Pull Request Auto Merge test.
+## Command line
+
+```text
+DeliveryEngine deliver <task.json> [--repo <path>] [--push | --pr [--wait]] [--dry-run]
+```
+
+| Option | What it does |
+|---|---|
+| *(none)* | Local commit in a new branch only |
+| `--repo <path>` | Target repository. Default: current folder |
+| `--push` | Fetch fresh `base` from `origin` and push the branch |
+| `--pr` | Same as `--push`, plus PR, labels and auto-merge |
+| `--wait` | With `--pr`: wait until merged, CI failed or 30 minutes passed |
+| `--dry-run` | Validate the task and print the plan, change nothing |
+
+## Statuses and exit codes
+
+| Status | Meaning | Exit code |
+|---|---|---|
+| `Committed` | Local branch with a commit created | 0 |
+| `Pushed` | Branch pushed to `origin` | 0 |
+| `PullRequestCreated` | PR opened | 0 |
+| `PullRequestExists` | Re-run: PR from this branch is already open | 0 |
+| `AlreadyMerged` | Re-run: PR from this branch is already merged | 0 |
+| `Merged` | `--wait`: PR merged | 0 |
+| `CiFailed` | `--wait`: checks failed, PR left open | 3 |
+| `WaitTimedOut` | `--wait`: not finished in time, PR left as is | 3 |
+| `PullRequestClosed` | PR closed without merge — needs a human | 3 |
+| `AutoMergeFailed` | PR created, but auto-merge could not be enabled | 3 |
+| `PullRequestFailed` | PR not created; pushed branch removed | 3 |
+| `BranchExists`, `RemoteBranchExists` | Branch already exists — nothing touched | 3 |
+| `ChangeFailed`, `NothingToCommit`, `CommitFailed`, `PushFailed`, `FetchFailed`, `BaseNotFound`, `NotARepository` | Delivery failed; branch removed | 3 |
+
+Exit code `1` — invalid task, `2` — wrong command line.
+
+## Safety rules
+
+- Never `push --force`, never deletes or overwrites a branch it did not create in this run.
+- Works in a temporary worktree: your current branch and uncommitted files stay as they are.
+- On failure, removes what it created, so the next run starts clean.
+- Writes only inside the repository: no `..`, no absolute paths, no `.git`, no symlinks leading outside.
+- Git and gh are called with argument lists, not command strings: quotes and spaces in messages are safe.
+
+## Recommended target repository setup
+
+Auto-merge only makes sense when something can stop it:
+
+1. **Settings → General → Pull Requests:** enable *Allow auto-merge* and *Automatically delete head branches*.
+2. **Settings → Rules → Rulesets:** for the default branch require a pull request and require status checks (your CI job).
+
+Without required checks GitHub may refuse to enable auto-merge, and a red CI would not stop the merge.
+
+## Project structure
+
+```text
+src/DeliveryEngine/
+├── Tasks/        task model, JSON loading, validation
+├── Planning/     plan for --dry-run
+├── Git/          git process wrapper, temporary worktree
+├── GitHub/       gh wrapper: PR, labels, auto-merge, PR state
+├── Delivery/     delivery pipeline and statuses
+└── Program.cs    command line
+tests/DeliveryEngine.Tests/
+examples/task.example.json
+git-automerge-loop.ps1       original stress-test script
+docs/research/TEST-LOG.md    original stress-test log
+```
+
+## Roadmap
+
+- [ ] Batch mode: a folder or list of tasks, summary report
+- [ ] Negative stress test: failing CI and conflicting changes at scale
+- [ ] Merge method in the task (`merge` / `squash` / `rebase`)
+- [ ] Line endings handling for `patch` on Windows repositories (`core.autocrlf`)
+- [ ] GitHub Action and MCP server, so agents can call `deliver` directly
+- [ ] Guardrails for agents: allowed paths, diff size limit, no auto-merge for sensitive files
+
+## Where it started
+
+The project grew out of a GitHub Auto Merge stress test: a PowerShell script (`git-automerge-loop.ps1`) created **1,035 sequential Pull Requests** in about 3.5 hours, all of them ended up merged, with no CI failures and no conflicts.
+
+That test was deliberately simple: one file, append-only changes, a placeholder CI. Each branch was created from the previous one, so every PR contained all earlier commits, and some PRs were likely marked as merged by GitHub when a later PR landed. It showed that GitHub handles a long stream of PRs well — it did not test conflicts or failing CI, and the chain approach would stop at the first red build. The current engine creates every branch independently from `main` and reports failures instead of hiding them.
+
+The log of that experiment is kept in `docs/research/TEST-LOG.md`.
 
 ---
 
 # Русский
 
-## Обзор проекта
-
-GitHub Delivery Engine — экспериментальный проект автоматизации GitHub-процессов, выросший из нагрузочного тестирования механизма Auto Merge.
-
-Первоначально проект задумывался как исследование: сможет ли GitHub без проблем обработать непрерывный поток автоматически создаваемых Pull Request. В рамках первого эксперимента репозиторий успешно обработал **1035 последовательных Pull Request** со **100% успешностью слияния** и без единого сбоя доставки изменений.
-
-Полученный опыт постепенно превращается в универсальный слой доставки изменений через Pull Request, который в будущем сможет использоваться как обычными скриптами автоматизации, так и ИИ-агентами.
-
----
-
-## Текущее состояние
-
-### Уже реализовано
-
-- ✅ Автоматическое создание веток
-- ✅ Автоматическое создание коммитов
-- ✅ Автоматическое создание Pull Request
-- ✅ Интеграция с GitHub Actions
-- ✅ Поддержка GitHub Auto Merge
-- ✅ Автоматическое удаление временных веток
-- ✅ Нагрузочное тестирование на 1035 Pull Request
-
-### В разработке
-
-- 🚧 Очередь задач
-- 🚧 JSON-спецификация задач
-- 🚧 Поддержка патчей и diff-файлов
-- 🚧 Интеграция с ИИ-агентами
-
----
-
-## Зачем нужен проект
-
-Современные ИИ-системы уже умеют:
-
-- анализировать код;
-- предлагать исправления;
-- генерировать новые файлы;
-- создавать патчи.
-
-Однако между созданием изменений и их появлением в рабочем репозитории всё ещё остаётся слой ручной работы.
-
-Цель проекта — исследовать возможность построения универсального конвейера доставки изменений на базе стандартных возможностей GitHub:
-
-- Ветки
-- Pull Request
-- Проверки CI
-- Auto Merge
-- Репозиторные автоматизации
-
----
-
-## Архитектура
+Небольшая консольная утилита на .NET: превращает JSON-описание изменений в обычный Pull Request на GitHub и честно сообщает, чем все закончилось.
 
 ```text
-Поставщик изменений
-(ИИ / Скрипт / Внешняя система)
-                 │
-                 ▼
-      GitHub Delivery Engine
-                 │
-                 ▼
-         Создание ветки
-                 │
-                 ▼
-        Применение изменений
-                 │
-                 ▼
-               Коммит
-                 │
-                 ▼
-                Push
-                 │
-                 ▼
-       Создание Pull Request
-                 │
-                 ▼
-        GitHub Actions (CI)
-                 │
-                 ▼
-             Auto Merge
-                 │
-                 ▼
-                Main
+task.json ──► ветка от свежего main ──► изменения ──► коммит ──► push
+          ──► Pull Request ──► метки ──► auto-merge ──► ожидание CI ──► статус
 ```
 
----
+Она рассчитана на скрипты и ИИ-агентов, которые умеют готовить изменения, но не должны пушить в `main` напрямую. Каждое изменение проходит через PR, CI репозитория и его правила защиты веток.
 
-## Стратегия цепочки
+## Состояние
 
-Одной из ключевых идей эксперимента стала **стратегия непрерывной цепочки**.
+Рабочая версия v1, проверенная на настоящем репозитории: слияние, падение CI, повторный запуск, несуществующая метка.
 
-Вместо постоянной синхронизации с удалённой веткой каждая новая ветка создавалась на базе предыдущей локальной ветки:
+- ✅ Формат задачи в JSON с валидацией
+- ✅ Операции `write`, `delete` и `patch` (unified diff)
+- ✅ Работа во временном `git worktree`: ваша рабочая копия не трогается
+- ✅ Ветка от свежего `base` из origin, push без `--force`
+- ✅ Pull Request, метки и auto-merge через GitHub CLI
+- ✅ Ожидание результата: смержен / CI упал / вышло время
+- ✅ Безопасный повторный запуск: уже доставленная задача не дублируется
+
+## Что нужно
+
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- `git`
+- [GitHub CLI](https://cli.github.com/) (`gh`) с выполненным `gh auth login` — только для `--pr`
+
+## Быстрый старт
+
+```bash
+git clone https://github.com/sa-teach/github-delivery-engine.git
+cd github-delivery-engine
+dotnet test
+```
+
+Проверить задачу, ничего не меняя:
+
+```bash
+dotnet run --project src/DeliveryEngine -- deliver examples/task.example.json --dry-run
+```
+
+Доставить задачу в другой репозиторий и дождаться результата:
+
+```bash
+dotnet run --project src/DeliveryEngine -- deliver task.json --repo ../my-repo --pr --wait
+```
+
+## Формат задачи
+
+Пример — в `examples/task.example.json`, описание полей и операций — в английской части выше. Коротко:
+
+- `id`, `branch`, `commitMessage`, `pr.title`, `changes` — обязательные;
+- `base` по умолчанию `main`; `branch` — это «личность» задачи при повторных запусках;
+- `write` записывает файл байт в байт (UTF-8 без BOM), `delete` удаляет существующий файл, `patch` применяет unified diff через `git apply`;
+- неизвестные поля — ошибка, пути только относительные, без `..` и без `.git`.
+
+## Командная строка
 
 ```text
-main
- └── branch-1
-      └── branch-2
-           └── branch-3
-                └── ...
-                     └── branch-1035
+DeliveryEngine deliver <task.json> [--repo <путь>] [--push | --pr [--wait]] [--dry-run]
 ```
 
-На практике такой подход позволил избежать гонок обновлений и конфликтов во время обработки более тысячи Pull Request.
+| Параметр | Что делает |
+|---|---|
+| *(без параметров)* | Только локальный коммит в новой ветке |
+| `--repo <путь>` | Целевой репозиторий. По умолчанию текущая папка |
+| `--push` | Взять свежий `base` из `origin` и запушить ветку |
+| `--pr` | То же, что `--push`, плюс PR, метки и auto-merge |
+| `--wait` | Вместе с `--pr`: ждать слияния, падения CI или 30 минут |
+| `--dry-run` | Проверить задачу и показать план, ничего не меняя |
 
----
+Статусы и коды выхода — в таблице в английской части. Коротко: `0` — успех (в том числе «уже доставлено»), `1` — некорректная задача, `2` — неверная командная строка, `3` — доставка не удалась или требует внимания человека.
 
-## Результаты стресс-теста
+## Правила безопасности
 
-| Метрика | Значение |
-|----------|----------:|
-| Создано Pull Request | 1035 |
-| Успешно влито | 1035 |
-| Успешность Merge | 100% |
-| Неудачных доставок | 0 |
-| Ошибок CI | 0 |
-| Общее время обработки | ~3.5 часа |
-| Оставшихся веток | 1 |
+- Никогда не делает `push --force` и не удаляет и не перезаписывает ветки, которые создал не он в этом запуске.
+- Работает во временном worktree: текущая ветка и незакоммиченные файлы остаются как были.
+- При неудаче убирает то, что успел создать, чтобы следующий запуск начался с чистого листа.
+- Пишет только внутри репозитория: без `..`, абсолютных путей, `.git` и симлинков наружу.
+- `git` и `gh` вызываются со списком аргументов, а не строкой: кавычки и пробелы в сообщениях безопасны.
 
-### Наблюдения
+## Как настроить целевой репозиторий
 
-- Все Pull Request были успешно обработаны.
-- GitHub Actions прошёл для каждого Pull Request.
-- В ходе эксперимента не возникало merge-конфликтов.
-- Auto Merge работал стабильно на протяжении всего теста.
-- После завершения эксперимента сохранилась одна ветка (`feature/auto-line-169`), причина её сохранения точно не установлена.
+Auto-merge имеет смысл, только если его есть чем остановить:
 
----
+1. **Settings → General → Pull Requests:** включить *Allow auto-merge* и *Automatically delete head branches*.
+2. **Settings → Rules → Rulesets:** для основной ветки требовать Pull Request и прохождение проверок (ваш CI).
 
-## Технологический стек
-
-- **Ядро автоматизации:** PowerShell (.ps1)
-- **Интерфейс Git:** Git
-- **Интеграция с GitHub:** GitHub CLI (`gh`)
-- **CI/CD:** GitHub Actions
-- **Экспериментальная интеграция ИИ:** Ollama (Qwen2.5-Coder / DeepSeek-R1)
-
----
-
-## Структура репозитория
-
-```text
-README.md
-git-automerge-loop.ps1
-docs/
-├── architecture/
-└── research/TEST-LOG.md
-```
-
----
+Без обязательных проверок GitHub может не включить auto-merge, а красный CI не остановит слияние.
 
 ## План развития
 
-### Версия 1.0
+- [ ] Пакетный режим: папка или список задач, сводный отчет
+- [ ] «Негативный» стресс-тест: падающий CI и конфликтующие правки в большом количестве
+- [ ] Способ слияния в задаче (`merge` / `squash` / `rebase`)
+- [ ] Переводы строк для `patch` в Windows-репозиториях (`core.autocrlf`)
+- [ ] GitHub Action и MCP-сервер, чтобы агенты вызывали `deliver` напрямую
+- [ ] Ограничения для агентов: разрешенные пути, лимит размера диффа, без auto-merge для чувствительных файлов
 
-- [ ] Очередь задач
-- [ ] JSON-формат описания задач
-- [ ] Пакетная обработка
-- [ ] Абстракция конвейера доставки
+## С чего все началось
 
-### Версия 2.0
+Проект вырос из нагрузочного теста GitHub Auto Merge: PowerShell-скрипт (`git-automerge-loop.ps1`) создал **1035 последовательных Pull Request** примерно за 3,5 часа; все они оказались влиты, без ошибок CI и без конфликтов.
 
-- [ ] Поддержка патчей
-- [ ] Работа с Git Diff
-- [ ] Откат изменений
-- [ ] Политики повторных попыток
+Тест был намеренно простым: один файл, только дописывание, CI-заглушка. Каждая ветка создавалась от предыдущей, поэтому каждый PR содержал все предыдущие коммиты, и часть PR, вероятно, GitHub пометил как влитые, когда сливался более поздний. Тест показал, что GitHub уверенно держит длинный поток PR, но не проверял конфликты и падающий CI — а цепочка остановилась бы на первой красной сборке. Текущий движок создает каждую ветку независимо от `main` и сообщает о неудачах, а не скрывает их.
 
-### Версия 3.0
-
-- [ ] Интеграция с ИИ-агентами
-- [ ] Конвейер Issue → Fix → Pull Request
-- [ ] Мультиагентная работа
-- [ ] Автоматизированный анализ репозиториев
-
----
-
-## Пример задания
-
-```json
-{
-  "branch": "fix/student-project",
-  "commitMessage": "fix: remove duplicated code",
-  "prTitle": "Fix duplicated code",
-  "changes": [
-    {
-      "file": "Program.cs",
-      "operation": "replace",
-      "content": "..."
-    }
-  ]
-}
-```
-
----
-
-## Журнал исследований
-
-История возникновения проекта и результаты нагрузочного тестирования вынесены в отдельный файл:
-
-- **docs\research\TEST-LOG.md**
-
-Там находится подробная информация о проведённом эксперименте с 1035 Pull Request, используемой стратегии и полученных результатах.
+Журнал того эксперимента — в `docs/research/TEST-LOG.md`.
