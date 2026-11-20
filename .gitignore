@@ -1,2 +1,9 @@
 # Ignore all .sh files
 *.sh
+
+# .NET build output
+bin/
+obj/
+*.user
+.vs/
+TestResults/
