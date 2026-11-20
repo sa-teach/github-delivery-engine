@@ -42,6 +42,7 @@ public static class Program
         var dryRun = rest.Remove("--dry-run");
         var push = rest.Remove("--push");
         var createPr = rest.Remove("--pr");
+        var wait = rest.Remove("--wait");
 
         var repoPath = Directory.GetCurrentDirectory();
         var repoIndex = rest.IndexOf("--repo");
@@ -54,6 +55,12 @@ public static class Program
             }
             repoPath = rest[repoIndex + 1];
             rest.RemoveRange(repoIndex, 2);
+        }
+
+        if (wait && !createPr)
+        {
+            stderr.WriteLine("--wait работает только вместе с --pr.");
+            return ExitUsage;
         }
 
         var unknownOption = rest.FirstOrDefault(a => a.StartsWith('-'));
@@ -109,7 +116,7 @@ public static class Program
             if (createPr)
             {
                 var github = (githubFactory ?? (path => new GhCliClient(path)))(repoPath);
-                result = await PullRequestDelivery.RunAsync(repoPath, task, github);
+                result = await PullRequestDelivery.RunAsync(repoPath, task, github, new PullRequestOptions(Wait: wait));
             }
             else
             {
@@ -122,6 +129,11 @@ public static class Program
             stderr.WriteLine($"Ошибка git: {ex.Message}");
             return ExitDeliveryFailed;
         }
+        catch (GitHubException ex)
+        {
+            stderr.WriteLine($"Ошибка GitHub: {ex.Message}");
+            return ExitDeliveryFailed;
+        }        
 
         var writer = result.IsSuccess ? stdout : stderr;
         writer.WriteLine($"[{result.Status}] {result.Message}");
@@ -148,10 +160,11 @@ public static class Program
     private static void PrintUsage(TextWriter writer)
     {
         writer.WriteLine("Использование:");
-        writer.WriteLine("  DeliveryEngine deliver <task.json> [--repo <путь>] [--push | --pr] [--dry-run]\n");
+        writer.WriteLine("  DeliveryEngine deliver <task.json> [--repo <путь>] [--push | --pr [--wait]] [--dry-run]");
         writer.WriteLine("  --repo     путь к git-репозиторию (по умолчанию текущая папка)");
         writer.WriteLine("  --push     взять свежий base из origin и запушить ветку туда");
         writer.WriteLine("  --pr       то же, что --push, плюс PR, метки и auto-merge через gh");
+        writer.WriteLine("  --wait     после --pr ждать слияния или падения CI (до 30 минут)");        
         writer.WriteLine("  --dry-run  только проверить задачу и показать план");
     }
 }

@@ -141,7 +141,8 @@ public sealed class ProgramTests : IDisposable
         Assert.Empty(err);
         Assert.Contains("[PullRequestCreated]", output);
         Assert.Contains("https://github.com/owner/repo/pull/42", output);
-        Assert.Equal(["create", "labels #42: bot", "auto-merge #42"], github.Calls);
+        Assert.Equal(["find fix/t1", "create", "labels #42: bot", "auto-merge #42"], github.Calls);        
+        //Assert.Equal(["create", "labels #42: bot", "auto-merge #42"], github.Calls);
     }
 
     [Fact]
@@ -183,6 +184,8 @@ public sealed class ProgramTests : IDisposable
     [InlineData("deliver", "a.json", "b.json")]
     [InlineData("deliver", "a.json", "--force")]
     [InlineData("deliver", "a.json", "--repo")]
+    [InlineData("deliver", "a.json", "--wait")]
+    [InlineData("deliver", "a.json", "--push", "--wait")]    
     public async Task BadUsage_ReturnsUsageCode(params string[] args)
     {
         Assert.Equal(Program.ExitUsage, (await Run(args)).Code);

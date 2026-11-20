@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace DeliveryEngine.GitHub;
@@ -28,13 +29,80 @@ public sealed partial class GhCliClient(string repoPath) : IGitHubClient
     public Task EnableAutoMergeAsync(int number) =>
         RunAsync(["pr", "merge", number.ToString(), "--auto", "--merge"]);
 
+    public async Task<PullRequestState?> FindPullRequestAsync(string head)
+    {
+        var output = await RunAsync(["pr", "list", "--head", head, "--state", "all", "--limit", "1", "--json", StateFields]);
+        using var doc = JsonDocument.Parse(output);
+        var items = doc.RootElement;
+        return items.GetArrayLength() == 0 ? null : ParseState(items[0]);
+    }
+
+    public async Task<PullRequestState> GetPullRequestStateAsync(int number)
+    {
+        var output = await RunAsync(["pr", "view", number.ToString(), "--json", StateFields]);
+        using var doc = JsonDocument.Parse(output);
+        return ParseState(doc.RootElement);
+    }
+
+    private const string StateFields = "number,url,state,statusCheckRollup";
+
+    public static PullRequestState ParseState(JsonElement pr)
+    {
+        var lifecycle = pr.GetProperty("state").GetString() switch
+        {
+            "OPEN" => PullRequestLifecycle.Open,
+            "MERGED" => PullRequestLifecycle.Merged,
+            "CLOSED" => PullRequestLifecycle.Closed,
+            var other => throw new GitHubException($"Неизвестное состояние PR: {other}"),
+        };
+
+        var checks = pr.TryGetProperty("statusCheckRollup", out var rollup) && rollup.ValueKind == JsonValueKind.Array
+            ? ParseChecks(rollup)
+            : ChecksState.None;
+
+        return new PullRequestState(pr.GetProperty("number").GetInt32(), pr.GetProperty("url").GetString()!, lifecycle, checks);
+    }
+
+    // В statusCheckRollup два вида записей: CheckRun (GitHub Actions) с полями status/conclusion
+    // и StatusContext (старые commit statuses) с полем state.
+    private static ChecksState ParseChecks(JsonElement rollup)
+    {
+        if (rollup.GetArrayLength() == 0)
+        {
+            return ChecksState.None;
+        }
+
+        var pending = false;
+        foreach (var check in rollup.EnumerateArray())
+        {
+            var result = check.TryGetProperty("conclusion", out var conclusion) && conclusion.ValueKind == JsonValueKind.String && conclusion.GetString() != ""
+                ? conclusion.GetString()
+                : check.TryGetProperty("state", out var state) && state.ValueKind == JsonValueKind.String
+                    ? state.GetString()
+                    : null;
+
+            switch (result)
+            {
+                case "SUCCESS" or "NEUTRAL" or "SKIPPED":
+                    break;
+                case "FAILURE" or "ERROR" or "CANCELLED" or "TIMED_OUT" or "ACTION_REQUIRED" or "STARTUP_FAILURE" or "STALE":
+                    return ChecksState.Failed;
+                default:
+                    pending = true;
+                    break;
+            }
+        }
+
+        return pending ? ChecksState.Pending : ChecksState.Passed;
+    }
+
     public static IReadOnlyList<string> BuildCreateArgs(PullRequestRequest request) =>
     [
         "pr", "create",
         "--base", request.Base,
         "--head", request.Head,
         "--title", request.Title,
-        // Тело через stdin: так переносы строк и кавычки доходят без искажений.
+        // Тело через stdin: так переносы строк и кавычки доходят без искажений
         "--body-file", "-",
     ];
 

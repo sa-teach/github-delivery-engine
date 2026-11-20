@@ -19,6 +19,12 @@ public enum DeliveryStatus
     PullRequestCreated,
     PullRequestFailed,
     AutoMergeFailed,
+    PullRequestExists,
+    PullRequestClosed,
+    AlreadyMerged,
+    Merged,
+    CiFailed,
+    WaitTimedOut,
 }
 
 public sealed record DeliveryResult(DeliveryStatus Status, string Message, string? CommitSha = null)
@@ -27,7 +33,12 @@ public sealed record DeliveryResult(DeliveryStatus Status, string Message, strin
 
     public IReadOnlyList<string> Warnings { get; init; } = [];
 
-    public bool IsSuccess => Status is DeliveryStatus.Committed or DeliveryStatus.Pushed or DeliveryStatus.PullRequestCreated;
+    public bool IsSuccess => Status is DeliveryStatus.Committed
+        or DeliveryStatus.Pushed
+        or DeliveryStatus.PullRequestCreated
+        or DeliveryStatus.PullRequestExists
+        or DeliveryStatus.AlreadyMerged
+        or DeliveryStatus.Merged;
 }
 // Remote = null: только локальный коммит, от локальной ветки base
 // Remote = "origin": base берется из origin, результат пушится туда же
