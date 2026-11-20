@@ -1,4 +1,6 @@
-﻿using DeliveryEngine.Planning;
+﻿using DeliveryEngine.Delivery;
+using DeliveryEngine.Git;
+using DeliveryEngine.Planning;
 using DeliveryEngine.Tasks;
 
 namespace DeliveryEngine;
@@ -8,14 +10,15 @@ public static class Program
     public const int ExitOk = 0;
     public const int ExitInvalidTask = 1;
     public const int ExitUsage = 2;
+    public const int ExitDeliveryFailed = 3;
 
-    public static int Main(string[] args)
+    public static async Task<int> Main(string[] args)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
-        return Run(args, Console.Out, Console.Error);
+        return await RunAsync(args, Console.Out, Console.Error);
     }
 
-    public static int Run(string[] args, TextWriter stdout, TextWriter stderr)
+    public static async Task<int> RunAsync(string[] args, TextWriter stdout, TextWriter stderr)
     {
         if (args.Length == 0 || args[0] is "-h" or "--help")
         {
@@ -32,6 +35,20 @@ public static class Program
 
         var rest = args.Skip(1).ToList();
         var dryRun = rest.Remove("--dry-run");
+        var push = rest.Remove("--push");
+
+        var repoPath = Directory.GetCurrentDirectory();
+        var repoIndex = rest.IndexOf("--repo");
+        if (repoIndex >= 0)
+        {
+            if (repoIndex + 1 >= rest.Count)
+            {
+                stderr.WriteLine("После --repo нужно указать путь к репозиторию.");
+                return ExitUsage;
+            }
+            repoPath = rest[repoIndex + 1];
+            rest.RemoveRange(repoIndex, 2);
+        }
 
         var unknownOption = rest.FirstOrDefault(a => a.StartsWith('-'));
         if (unknownOption is not null)
@@ -42,7 +59,7 @@ public static class Program
 
         if (rest.Count != 1)
         {
-            stderr.WriteLine("Укажите ровно один файл задачи");
+            stderr.WriteLine("Укажите ровно один файл задачи.");
             PrintUsage(stderr);
             return ExitUsage;
         }
@@ -69,25 +86,50 @@ public static class Program
             return ExitInvalidTask;
         }
 
-        if (!dryRun)
+        if (dryRun)
         {
-            stderr.WriteLine("Запустите с --dry-run.");
-            return ExitUsage;
+            stdout.WriteLine($"Задача '{task.Id}' корректна. План:");
+            var steps = DeliveryPlanner.BuildPlan(task);
+            for (var i = 0; i < steps.Count; i++)
+            {
+                stdout.WriteLine($"  {i + 1}. {steps[i]}");
+            }
+            return ExitOk;
         }
 
-        stdout.WriteLine($"Задача '{task.Id}' корректна. План:");
-        var steps = DeliveryPlanner.BuildPlan(task);
-        for (var i = 0; i < steps.Count; i++)
+        DeliveryResult result;
+        try
         {
-            stdout.WriteLine($"  {i + 1}. {steps[i]}");
+            var options = new DeliveryOptions(Remote: push ? "origin" : null);
+            result = await GitDelivery.RunAsync(repoPath, task, options);
+        }
+        catch (GitException ex)
+        {
+            stderr.WriteLine($"Ошибка git: {ex.Message}");
+            return ExitDeliveryFailed;
         }
 
-        return ExitOk;
+        var writer = result.IsSuccess ? stdout : stderr;
+        writer.WriteLine($"[{result.Status}] {result.Message}");
+
+        if (result.Status == DeliveryStatus.Committed)
+        {
+            stdout.WriteLine("Ветка создана только локально. Чтобы отправить ее в origin, добавьте --push.");
+        }
+        else if (result.Status == DeliveryStatus.Pushed)
+        {
+            stdout.WriteLine("PR пока не создается...");
+        }
+
+        return result.IsSuccess ? ExitOk : ExitDeliveryFailed;
     }
 
     private static void PrintUsage(TextWriter writer)
     {
         writer.WriteLine("Использование:");
-        writer.WriteLine("  DeliveryEngine deliver <task.json> --dry-run");
+        writer.WriteLine("  DeliveryEngine deliver <task.json> [--repo <путь>] [--push] [--dry-run]\n");
+        writer.WriteLine("  --repo     путь к git-репозиторию (по умолчанию текущая папка)");
+        writer.WriteLine("  --push     взять свежий base из origin и запушить ветку туда");
+        writer.WriteLine("  --dry-run  только проверить задачу и показать план");
     }
 }
