@@ -1,0 +1,27 @@
+{
+  "id": "fix-duplicated-code-001",
+  "base": "main",
+  "branch": "fix/duplicated-code-001",
+  "commitMessage": "fix: remove duplicated code",
+  "pr": {
+    "title": "Fix duplicated code",
+    "body": "Removes duplicated helper and an unused file.",
+    "labels": ["bot"],
+    "autoMerge": true
+  },
+  "changes": [
+    {
+      "op": "write",
+      "file": "src/Program.cs",
+      "content": "Console.WriteLine(\"Hello\");\n"
+    },
+    {
+      "op": "delete",
+      "file": "src/OldHelper.cs"
+    },
+    {
+      "op": "patch",
+      "diff": "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-# Old title\n+# New title\n"
+    }
+  ]
+}
